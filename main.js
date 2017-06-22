@@ -3,6 +3,7 @@ console.log("Starting Zork module")
 /* cleanUpOutput, recievedGameOutput, sendGameOutput all from:
  * https://github.com/aeolingamenfel/discord-text-adventure-bot/blob/master/MessageHandler.js
  */
+const fs = require("fs")
 const child_process = require("child_process")
 const stringDecoder = require("string_decoder").StringDecoder
 const stripAnsi = require('strip-ansi')
@@ -21,16 +22,74 @@ var compiledOutput = null
 var bot = new Discord.Client({autoReconnect: true, max_message_cache: 0})
 bot.login(BOT_TOKEN)
 
-var frotzQueue = null
+/* Backlog
+- Save and load textChannels
+- Download new stories
+- Put those damn save files in their own folder if possible
 
-function createQueues() {
-	//Message queue so as not to overwhelm child proc
-	frotzQueue = new Queue(function(message, callback) {
+   Current
+- Multi user support
+*/
+
+var textChannels = []
+
+//Only handle constructor relevant information inside of here immediately
+function channelObject(channelId, storyFile) {
+	this.frotzQueue = new Queue(function(message, callback) {
 		console.log("Sending message to frotz!")
-		game.stdin.write(message + "\n")
+		message.gameProcess.stdin.write(message.message + "\n")
 		callback()
 	}, {afterProcessDelay: 1000})
-	//Unfortunately it isn't possible to find status of stdin. Assume reasonable processing time of 1s.
+	this.channelId = channelId
+	this.gameRunning = function() {
+		return !this.gameProcess == null
+	}
+	
+	this.destroy = function() {
+		this.frotzQueue.destroy()
+		this.gameProcess.kill()
+	}
+	
+	//Only actually create the bot process once every piece of constructor is correct
+	var storyDir = process.cwd() + "/stories/"
+	
+	this.storyError = function(error) {
+		botSend(this.channelId, "Something went wrong :")
+		botSend(this.channelId, error, {code: true})
+		removeChannelObject(this.channelId)
+	}
+
+	//TODO: cwd is probably what's putting the save data there...
+	this.gameProcess = child_process.spawn(process.cwd() + "/dfrotz/dfrotz.exe", [storyDir + storyFile], {cwd: process.cwd() + "/savedata"})
+	this.gameProcess.on("error", this.storyError) //This doesn't seem to be called on frotz error...
+	
+	//All pieces are in place. Set up stdio hooks.
+	this.frotzReady()
+	botSend(this.channelId, "Fully loaded and ready! Remember to load your game!")
+}
+
+function getChannelObjectFromId(channelId) {
+	for (var i=0; i<textChannels.length; i++) {
+		if (textChannels[i].channelId === channelId) {
+			return textChannels[i]
+		}
+	}
+}
+
+function createChannelObject(channelId, storyFile) {
+	textChannels.push(new channelObject(channelId, storyFile))		
+}
+
+function removeChannelObject(channelId) {
+	var channelObject = getChannelObjectFromId(channelId)
+	
+	if (channelObject) {
+		channelObject.destroy()
+
+		textChannels = textChannels.filter(function(id) {
+			return id !== channelId
+		})
+	}
 }
 
 function cleanUpOutput(raw, forDisplay = false){
@@ -66,7 +125,9 @@ function cleanUpOutput(raw, forDisplay = false){
 	return output
 }
 
-function recievedGameOutput(chunk) {
+channelObject.prototype.compiledOutput = "" //TODO: Do we actually need to define this? Can we not pass it from func to func?
+
+channelObject.prototype.recievedGameOutput = function(chunk) {
 	
 	var decoder = new stringDecoder("utf8")
 	var decoded = decoder.write(chunk)
@@ -78,17 +139,14 @@ function recievedGameOutput(chunk) {
 	var output = stripAnsi(decoded)
 	output = cleanUpOutput(output)
 
-	compiledOutput += decoded
-	//frotzReplied(compiledOutput)
-	// this marks the end of input
-	//if(output.match(/(>\r)/)) {
-		sendGameOutput()
-	//}
+	this.compiledOutput += decoded
+	this.sendGameOutput()
+	
 }
 
-function sendGameOutput() {
-	var unmodifiedOutput = compiledOutput
-	var finalOutput = stripAnsi(utf8.encode(compiledOutput))
+channelObject.prototype.sendGameOutput = function() {
+	var unmodifiedOutput = this.compiledOutput
+	var finalOutput = stripAnsi(utf8.encode(this.compiledOutput))
 
 	finalOutput.replace("\r", "\n")
 
@@ -101,48 +159,34 @@ function sendGameOutput() {
 	//For prompt dialogues (e.g. save) cleanUpOutput wipes it for some reason.
 	//In this case, just display what we have before data cleaning.
 	if (cleanOutput.length == 0) {
-		frotzReplied(unmodifiedOutput)
+		this.frotzReplied(unmodifiedOutput)
 	}
 	else {
-		frotzReplied(finalOutput)
+		this.frotzReplied(finalOutput)
 	}
 	
-	compiledOutput = ""
+	this.compiledOutput = ""
 }
 
-function frotzReady() {
+channelObject.prototype.frotzReplied = function(reply) {
+	console.log("Reply:", reply)
+	botSend(this.channelId, reply, {code: true})
+}
+
+channelObject.prototype.frotzReady = function() {
 	console.log("Frotz ready!")
-	game.stdout.on('data', (chunk) => {
-		recievedGameOutput(chunk)
+	this.gameProcess.stdout.on('data', (chunk) => {
+		this.recievedGameOutput(chunk)
 	})
 }
 
-function frotzReplied(reply) {
-	console.log(reply)
-	bot.channels.get(replyChannel).send(reply, {code: true})
-}
 
 //Called by message queue to send message to frotz
-function sendToFrotz(message) {
-	console.log("sent:", message)
-	frotzQueue.push(message)
-	console.log(frotzQueue.length)
+channelObject.prototype.sendToFrotz = function(message) {
+	//We must push gameProcess so the anonymous func inside Queue works
+	this.frotzQueue.push({message: message, gameProcess: this.gameProcess})
 }
 
-function initFrotz(storyFile) {
-	var storyDir = process.cwd() + "/stories/"
-	/*exec(frotzExe + " " + process.cwd() + "/stories/" + storyFile, (err, stdout, stderr) => {
-		if (err) {
-			console.error(err)
-			return
-		}
-		console.log(stdout)
-		frotzReady()
-	})*/
-	game = child_process.spawn("dfrotz/dfrotz.exe", [storyDir + storyFile], {cwd: process.cwd()})
-	frotzReady()
-	
-}
 
 //Returns object of command and args (string)
 function parseCommand(message) {
@@ -152,22 +196,29 @@ function parseCommand(message) {
 		if (firstSpaceIndex == -1) {
 			firstSpaceIndex = message.length
 		}
-		parsed.command = message.substring(prefix.length, firstSpaceIndex)
-		parsed.arguments = message.substring(firstSpaceIndex + 1)
+		parsed.command = message.substring(prefix.length, firstSpaceIndex).toLowerCase() //Commands in different case with same name is bad idea
+		
+		var afterFirstSpace = message.substring(firstSpaceIndex + 1)
+		
+		parsed.string = afterFirstSpace
+		parsed.arguments = afterFirstSpace.split(" ")
 		
 		return parsed
 	}
 }
 
-function gameRunning() {
-	return game != null
+function storyFileExists(storyFile) {
+	return true //TODO: Simple file exists to make sure story file exists before loading
 }
 
-var replyChannel = null //Lazy way to do it! Figure out some kind of "zork subscribe and unsubscribe" system
+function botSend(channelId, message, options) {
+	bot.channels.get(channelId).send(message, options)
+}
 
-
-function terminateZork() {
-	
+//It's fine do this small operation sync
+function getStoryList() {
+	var stories = fs.readdirSync(process.cwd() + "/stories")
+	console.log("stories:", stories)
 }
 
 bot.on("message", function(message) {
@@ -175,34 +226,58 @@ bot.on("message", function(message) {
 	if (!message.author.bot) {
 		var command = parseCommand(message.content)
 		if (command != null) {
+			var channelId = message.channel.id
 			
 			if (command.command !== "leave") {
+				var foundChannelObject = getChannelObjectFromId(channelId)
 				
-				//Work on command processing for general purpose easy lib
-				if (command.command === "z") {
-					if (!gameRunning()) {
-						console.log("Starting zork!")
-						replyChannel = message.channel.id
-						initFrotz("zork1.z5")
-
-					}
-					else
+				if (!foundChannelObject) {
+					
+					if (command.command === "storyload")
 					{
-						sendToFrotz(command.arguments)
+						console.log("Being summoned to channel! Creating myself!")
+						var storyFile = command.arguments[0]
+						if (storyFile != null && storyFile.length > 0) {
+							if (storyFileExists(storyFile)) {
+								createChannelObject(channelId, storyFile)
+							}
+						}
+						else {
+							botSend(channelId, "You didn't specify a story file.")
+						}
+						
+						botSend(channelId, "Loading story " + storyFile)
+					}
+					
+					if (command.command === "storylist") {
+						botSend(channelId, "Let me tell you what I've got installed...")
+						getStoryList()
+					}
+					
+					if (command.command === "z") {
+						botSend(channelId, "Whoa there, give me a story file to work with first.")
 					}
 				}
+				else {
+					if (command.command === "storystop") {
+						botSend(channelId, "Killing my process and stopping the story...")
+						removeChannelObject(channelId)
+					}
+					
+					if (command.command === "z") {
+						foundChannelObject.sendToFrotz(command.string)
+					}
+				}
+				
 			}
 			else {
-				console.log("Leaving channel...")
-				//leaveChannel()
-				terminateZork()
+				console.log("Leaving channel " + channelId)
+				removeChannelObject(channelId)
+			}
+			if (command.command === "help") {
+				botSend(channelId, "Your commands are z, storylist, storyload and storystop")
 			}
 		}
 	}
 })
-
-
-
-createQueues()
-
  
