@@ -49,6 +49,7 @@ function channelObject(channelId, storyFile) {
 	}
 	
 	this.destroy = function() {
+		console.log("Destroying channel object")
 		this.frotzQueue.destroy()
 		this.gameProcess.kill()
 	}
@@ -93,7 +94,6 @@ function removeChannelObject(channelId) {
 		textChannels.splice(index, 1)
 	}
 	
-	console.log("spliced:", textChannels.length)
 }
 
 function cleanUpOutput(raw, forDisplay = false){
@@ -158,7 +158,8 @@ channelObject.prototype.sendGameOutput = function() {
 	
 	finalOutput = cleanOutput
 	// lets also make the output monospace
-	finalOutput = "```\n" + finalOutput + "\n```"
+	//finalOutput = "```\n" + finalOutput + "\n```"
+	finalOutput = "\n" + finalOutput + "\n"
 	
 	//For prompt dialogues (e.g. save) cleanUpOutput wipes it for some reason.
 	//In this case, just display what we have before data cleaning.
@@ -303,4 +304,31 @@ bot.on("message", function(message) {
 		}
 	}
 })
- 
+
+//TODO: Save active channels
+//Notify active channels of closing, then terminate all child processes and reset textChannels
+function exitHandler() {
+	console.log("Exiting..")
+	for (var i=0; i<textChannels.length; i++) {
+		botSend(textChannels[i].channelId, "Sorry, bot's closing now.")
+		textChannels[i].destroy()
+	}
+	textChannels = []
+	process.exit()
+} 
+
+//process.on("exit", exitHandler)
+process.on("SIGINT", exitHandler)
+process.on("uncaughtException", exitHandler)
+
+//https://stackoverflow.com/a/14861513
+if (process.platform === "win32") {
+	var rl = require("readline").createInterface({
+		input: process.stdin,
+		output: process.stdout
+	})
+
+	rl.on("SIGINT", function () {
+		process.emit("SIGINT")
+	})
+}
