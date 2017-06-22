@@ -40,6 +40,7 @@ function channelObject(channelId, storyFile) {
 	this.frotzQueue = new Queue(function(message, callback) {
 		console.log("Sending message to frotz!")
 		message.gameProcess.stdin.write(message.message + "\n")
+		
 		callback()
 	}, {afterProcessDelay: 1000})
 	this.channelId = channelId
@@ -51,18 +52,16 @@ function channelObject(channelId, storyFile) {
 		this.frotzQueue.destroy()
 		this.gameProcess.kill()
 	}
-	
-	//Only actually create the bot process once every piece of constructor is correct
-	var storyDir = process.cwd() + storyDir
-	
+		
 	this.storyError = function(error) {
 		botSend(this.channelId, "Something went wrong :")
 		botSend(this.channelId, error, {code: true})
 		removeChannelObject(this.channelId)
 	}
 
-	//TODO: cwd is probably what's putting the save data there...
-	this.gameProcess = child_process.spawn(process.cwd() + "/dfrotz/dfrotz.exe", [storyDir + storyFile], {cwd: process.cwd() + "/savedata"})
+	//cwd is probably where process puts save data
+	this.gameProcess = child_process.spawn(process.cwd() + "/dfrotz/dfrotz.exe", [process.cwd() + storyDir + storyFile], {cwd: process.cwd() + "/savedata"})
+	console.log("dir", process.cwd() + storyDir + storyFile)
 	this.gameProcess.on("error", this.storyError) //This doesn't seem to be called on frotz error...
 	
 	//All pieces are in place. Set up stdio hooks.
@@ -88,10 +87,13 @@ function removeChannelObject(channelId) {
 	if (channelObject) {
 		channelObject.destroy()
 
-		textChannels = textChannels.filter(function(id) {
-			return id !== channelId
+		var index = textChannels.findIndex(function(o){
+			return o.channelId === channelObject.id
 		})
+		textChannels.splice(index, 1)
 	}
+	
+	console.log("spliced:", textChannels.length)
 }
 
 function cleanUpOutput(raw, forDisplay = false){
@@ -171,7 +173,6 @@ channelObject.prototype.sendGameOutput = function() {
 }
 
 channelObject.prototype.frotzReplied = function(reply) {
-	console.log("Reply:", reply)
 	botSend(this.channelId, reply, {code: true})
 }
 
@@ -185,6 +186,9 @@ channelObject.prototype.frotzReady = function() {
 
 //Called by message queue to send message to frotz
 channelObject.prototype.sendToFrotz = function(message) {
+	if (message.length <= 0) {
+		message = "\r"
+	}
 	//We must push gameProcess so the anonymous func inside Queue works
 	this.frotzQueue.push({message: message, gameProcess: this.gameProcess})
 }
@@ -210,12 +214,11 @@ function parseCommand(message) {
 }
 
 function storyFileExists(storyFile) {
-	
 	try {
-		var stats = fs.statSync(process.cwd + storyDir);
+		fs.statSync(process.cwd() + storyDir + storyFile)
 		return true
 	}
-	catch (e) {
+	catch(e) {
 		return false
 	}
 }
@@ -256,8 +259,8 @@ bot.on("message", function(message) {
 						var storyFile = command.arguments[0]
 						if (storyFile != null && storyFile.length > 0) {
 							if (storyFileExists(storyFile)) {
-								createChannelObject(channelId, storyFile)
 								botSend(channelId, "Loading story " + storyFile)
+								createChannelObject(channelId, storyFile)
 							}
 							else {
 								botSend(channelId, "I don't have a story called that.")
