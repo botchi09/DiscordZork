@@ -1,0 +1,3 @@
+http://www.ifarchive.org/indexes/if-archiveXinfocomXinterpretersXfrotz.html
+
+Extract dfrotz.zip (Dumb Frotz by Hugo Labrande) into here
