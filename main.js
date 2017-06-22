@@ -22,6 +22,8 @@ var compiledOutput = null
 var bot = new Discord.Client({autoReconnect: true, max_message_cache: 0})
 bot.login(BOT_TOKEN)
 
+var storyDir = "/stories/"
+
 /* Backlog
 - Save and load textChannels
 - Download new stories
@@ -51,7 +53,7 @@ function channelObject(channelId, storyFile) {
 	}
 	
 	//Only actually create the bot process once every piece of constructor is correct
-	var storyDir = process.cwd() + "/stories/"
+	var storyDir = process.cwd() + storyDir
 	
 	this.storyError = function(error) {
 		botSend(this.channelId, "Something went wrong :")
@@ -208,7 +210,14 @@ function parseCommand(message) {
 }
 
 function storyFileExists(storyFile) {
-	return true //TODO: Simple file exists to make sure story file exists before loading
+	
+	try {
+		var stats = fs.statSync(process.cwd + storyDir);
+		return true
+	}
+	catch (e) {
+		return false
+	}
 }
 
 function botSend(channelId, message, options) {
@@ -217,8 +226,16 @@ function botSend(channelId, message, options) {
 
 //It's fine do this small operation sync
 function getStoryList() {
-	var stories = fs.readdirSync(process.cwd() + "/stories")
+	var stories = fs.readdirSync(process.cwd() + storyDir)
 	console.log("stories:", stories)
+	var storyString = ""
+	for (var i=0; i<stories.length; i++) {
+		if (stories[i] !== "stories.txt") { //Exclude the helper readme
+			storyString += "\n" + stories[i]
+		}
+	}
+	
+	return storyString
 }
 
 bot.on("message", function(message) {
@@ -240,18 +257,21 @@ bot.on("message", function(message) {
 						if (storyFile != null && storyFile.length > 0) {
 							if (storyFileExists(storyFile)) {
 								createChannelObject(channelId, storyFile)
+								botSend(channelId, "Loading story " + storyFile)
+							}
+							else {
+								botSend(channelId, "I don't have a story called that.")
 							}
 						}
 						else {
 							botSend(channelId, "You didn't specify a story file.")
 						}
 						
-						botSend(channelId, "Loading story " + storyFile)
 					}
 					
 					if (command.command === "storylist") {
 						botSend(channelId, "Let me tell you what I've got installed...")
-						getStoryList()
+						botSend(channelId, getStoryList(), {code: true})
 					}
 					
 					if (command.command === "z") {
