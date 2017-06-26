@@ -9,11 +9,12 @@ const stringDecoder = require("string_decoder").StringDecoder
 const stripAnsi = require('strip-ansi')
 const utf8 = require("utf8")
 const botLogin = require("./login.json")
+
 const BOT_TOKEN = botLogin.token
 const prefix = "!"
 
 const Discord = require("discord.js")
-const Queue = require("better-queue")
+const Queue = require("better-queue") //Callback queue convenience library
 
 var frotzExe = process.cwd() + "/dfrotz/dfrotz.exe"
 var game = null //Create associative array of games?
@@ -26,28 +27,28 @@ var storyDir = "/stories/"
 
 /* Backlog
 - Save and load textChannels
-- Download new stories
-- Put those damn save files in their own folder if possible
-
-   Current
-- Multi user support
+- Download new stories from ifdb
 */
 
 var textChannels = []
 
 //Only handle constructor relevant information inside of here immediately
 function channelObject(channelId, storyFile) {
+	
+	//Initialise callback queue
 	this.frotzQueue = new Queue(function(message, callback) {
 		console.log("Sending message to frotz!")
 		message.gameProcess.stdin.write(message.message + "\n")
 		
 		callback()
-	}, {afterProcessDelay: 1000})
-	this.channelId = channelId
+	}, {afterProcessDelay: 1000}) //1s delay between messages as interpreter can't always keep up
+	this.channelId = channelId //The channel bot will post messages to
+	
 	this.gameRunning = function() {
 		return !this.gameProcess == null
 	}
 	
+	//Basic cleanup functions- child process doesn't always die when dereferenced
 	this.destroy = function() {
 		console.log("Destroying channel object")
 		this.frotzQueue.destroy()
@@ -60,16 +61,16 @@ function channelObject(channelId, storyFile) {
 		removeChannelObject(this.channelId)
 	}
 
-	//cwd is probably where process puts save data
+	//Create interpreter process and assign
 	this.gameProcess = child_process.spawn(process.cwd() + "/dfrotz/dfrotz.exe", [process.cwd() + storyDir + storyFile], {cwd: process.cwd() + "/savedata"})
-	console.log("dir", process.cwd() + storyDir + storyFile)
-	this.gameProcess.on("error", this.storyError) //This doesn't seem to be called on frotz error...
+	this.gameProcess.on("error", this.storyError) //This doesn't ever seem to be called. Probably because interpreter errors are handled through stdout
 	
 	//All pieces are in place. Set up stdio hooks.
 	this.frotzReady()
 	botSend(this.channelId, "Fully loaded and ready! Remember to load your game!")
 }
 
+//Returns the "channel object" of the text channel id (which is unique here)
 function getChannelObjectFromId(channelId) {
 	for (var i=0; i<textChannels.length; i++) {
 		if (textChannels[i].channelId === channelId) {
@@ -82,6 +83,7 @@ function createChannelObject(channelId, storyFile) {
 	textChannels.push(new channelObject(channelId, storyFile))		
 }
 
+//Remove channel object associated with text channel
 function removeChannelObject(channelId) {
 	var channelObject = getChannelObjectFromId(channelId)
 	
@@ -96,6 +98,7 @@ function removeChannelObject(channelId) {
 	
 }
 
+//Formats decoded output for text chat
 function cleanUpOutput(raw, forDisplay = false){
 	var splitRaw = raw.split(/[\n]|[\r]/)
 	var output = ""
@@ -129,8 +132,9 @@ function cleanUpOutput(raw, forDisplay = false){
 	return output
 }
 
-channelObject.prototype.compiledOutput = "" //TODO: Do we actually need to define this? Can we not pass it from func to func?
+channelObject.prototype.compiledOutput = "" //TODO: Do we actually need to define this? Can we not pass as an argument?
 
+//Interpreter sends blocks of utf8 bytes that must be decoded
 channelObject.prototype.recievedGameOutput = function(chunk) {
 	
 	var decoder = new stringDecoder("utf8")
@@ -148,6 +152,7 @@ channelObject.prototype.recievedGameOutput = function(chunk) {
 	
 }
 
+//Performs additional formatting and decoding, then writes to chat
 channelObject.prototype.sendGameOutput = function() {
 	var unmodifiedOutput = this.compiledOutput
 	var finalOutput = stripAnsi(utf8.encode(this.compiledOutput))
@@ -214,6 +219,7 @@ function parseCommand(message) {
 	}
 }
 
+//Simple file validation to check a story file exists before loading it
 function storyFileExists(storyFile) {
 	try {
 		fs.statSync(process.cwd() + storyDir + storyFile)
@@ -228,11 +234,12 @@ function botSend(channelId, message, options) {
 	bot.channels.get(channelId).send(message, options)
 }
 
-//It's fine do this small operation sync
+//Returns chat formatted string of all story files in stories directory
 function getStoryList() {
-	var stories = fs.readdirSync(process.cwd() + storyDir)
+	var stories = fs.readdirSync(process.cwd() + storyDir) //It's fine do this very small operation sync
 	console.log("stories:", stories)
 	var storyString = ""
+	
 	for (var i=0; i<stories.length; i++) {
 		if (stories[i] !== "stories.txt") { //Exclude the helper readme
 			storyString += "\n" + stories[i]
@@ -242,6 +249,7 @@ function getStoryList() {
 	return storyString
 }
 
+//Called when any message is posted to text channel bot can access
 bot.on("message", function(message) {
 	var userId = message.author.id
 	if (!message.author.bot) {
@@ -258,8 +266,9 @@ bot.on("message", function(message) {
 					{
 						console.log("Being summoned to channel! Creating myself!")
 						var storyFile = command.arguments[0]
-						if (storyFile != null && storyFile.length > 0) {
-							if (storyFileExists(storyFile)) {
+						if (storyFile != null && storyFile.length > 0) { //Validate story file has been specified
+							if (storyFileExists(storyFile)) { //Validate existence of file
+								//Display story loading in chat and instance a new channel object
 								botSend(channelId, "Loading story " + storyFile)
 								createChannelObject(channelId, storyFile)
 							}
@@ -322,6 +331,7 @@ process.on("SIGINT", exitHandler)
 process.on("uncaughtException", exitHandler)
 
 //https://stackoverflow.com/a/14861513
+//Handles Ctrl+C in windows properly
 if (process.platform === "win32") {
 	var rl = require("readline").createInterface({
 		input: process.stdin,
