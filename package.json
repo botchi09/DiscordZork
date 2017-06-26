@@ -10,10 +10,10 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "better-queue": "^3.8.5",
     "bufferutil": "^3.0.1",
     "discord.js": "^11.1.0",
     "erlpack": "github:hammerandchisel/erlpack",
-    "ifvms": "^1.1.1",
     "libsodium-wrappers": "^0.5.1",
     "sodium": "^2.0.1",
     "strip-ansi": "^4.0.0",

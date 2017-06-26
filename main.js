@@ -8,10 +8,10 @@ const child_process = require("child_process")
 const stringDecoder = require("string_decoder").StringDecoder
 const stripAnsi = require('strip-ansi')
 const utf8 = require("utf8")
-const botLogin = require("./login.json")
+const botConfig = require("./config.json")
 
-const BOT_TOKEN = botLogin.token
-const prefix = "!"
+const BOT_TOKEN = botConfig.token
+const prefix = botConfig.prefix
 
 const Discord = require("discord.js")
 const Queue = require("better-queue") //Callback queue convenience library
